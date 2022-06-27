@@ -1,0 +1,230 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+/*
+ *This Script contains the finite state machine controller for the Elemental enemies.
+ *The state will change based on the distance the elemental is from the player
+ */ 
+
+
+public class ElementalFSM : MonoBehaviour
+{
+
+    public enum FSMState
+    {
+        Patrol,
+        Chase,
+        Attack,
+        Die
+    }
+
+    protected float elapsedTime = 0.0f;
+    private Rigidbody rbody;
+    private FSMState curState;
+    internal Animator animator;
+    public float speed;
+    public Transform target;
+    private GameObject objPlayer;
+    private Transform playerTransform;
+    public GameObject[] pointList;
+    private Vector3 destPos;
+    private float curRotSpeed;
+    bool Dead = false;
+    public GameObject thisObj;
+
+
+    //HP Bars
+    private float maxHealth;
+    public float health;
+    private Text healText;
+    private Image healBar;
+
+
+    void Start()
+    {
+        rbody = GetComponent<Rigidbody>();
+        animator = GetComponent<Animator>();
+        curState = FSMState.Patrol;
+        animator.CrossFadeInFixedTime("Walk", 0.1f);
+        speed = 2.0f;
+        curRotSpeed = 1.0f;
+
+        //Get the target enemy(Player)
+        objPlayer = GameObject.FindGameObjectWithTag("Player");
+        playerTransform = objPlayer.transform;
+        pointList = GameObject.FindGameObjectsWithTag("ElementalWander");
+
+        //Set Random destination to start
+        FindNextPoint();
+
+        //Enemy HP Bar (Any)
+        maxHealth = 100;
+        health = 100;
+        healText = transform.Find("EnemyHPBar").Find("HPText").GetComponent<Text>();
+        healBar = transform.Find("EnemyHPBar").Find("MaxHPBar").Find("HPBar").GetComponent<Image>();
+
+
+    }
+
+    // Update is called once per frame
+    void Update()
+    {
+        //Enemy Health Part
+        healText.text = health.ToString();
+        healBar.fillAmount = health / maxHealth;
+
+        switch (curState)
+        {
+            case FSMState.Patrol: UpdatePatrolState(); break;
+            case FSMState.Chase: UpdateChaseState(); break;
+            case FSMState.Attack: UpdateAttackState(); break;
+            case FSMState.Die: UpdateDeathState(); break;
+        }
+
+        elapsedTime += Time.deltaTime;
+    }
+
+    void OnCollisionEnter(Collision col)
+    {
+
+
+        if (col.gameObject.tag == "tree" && curState != FSMState.Attack)
+        {
+            Debug.Log("hit tree");
+            // get your target's rotation
+            Quaternion targetRotation = target.transform.rotation;
+
+            // choose an object and multiply its axis to reverse
+            transform.rotation = targetRotation * Quaternion.Euler(0, 180f, 0);
+            FindNextPoint();
+        }
+
+    }
+    //Find the next point to walk to
+    void FindNextPoint()
+    {
+        int rndIndex = Random.Range(0, pointList.Length);
+        float rndRadius = 10.0f;
+
+        Vector3 rndPosition = Vector3.zero;
+        destPos = pointList[rndIndex].transform.position + rndPosition;
+
+        if (IsInCurrentRange(destPos))
+        {
+            rndPosition = new Vector3(Random.Range(-rndRadius, rndRadius), 0.0f, Random.Range(-rndRadius, rndRadius));
+            destPos = pointList[rndIndex].transform.position + rndPosition;
+        }
+
+    }
+
+    //Check if in range of given position
+    bool IsInCurrentRange(Vector3 pos)
+    {
+        float xPos = Mathf.Abs(pos.x - transform.position.x);
+        float zPos = Mathf.Abs(pos.z - transform.position.z);
+
+        if (xPos <= 50 && zPos <= 50)
+            return true;
+
+        return false;
+    }
+
+
+    private void UpdatePatrolState()
+    {
+        transform.GetComponent<Rigidbody>().constraints = RigidbodyConstraints.None;
+        rbody.freezeRotation = true;
+        if (health <= 0)
+        {
+            curState = FSMState.Die;
+        }
+        //Find another random patrol point if the current point is reached
+
+        if (Vector3.Distance(transform.position, destPos) <= 10.0f)
+        {
+            FindNextPoint();
+        }
+
+        else if (Vector3.Distance(transform.position, playerTransform.position) <= 10.0f)
+        {
+            curState = FSMState.Chase;
+        }
+
+        //Rotate to the target point
+        Quaternion targetRotation = Quaternion.LookRotation(destPos - transform.position);
+        transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, Time.deltaTime * curRotSpeed);
+
+        //Go Forward
+        transform.Translate(Vector3.forward * Time.deltaTime * speed);
+    }
+
+    private void UpdateChaseState()
+    {
+        transform.GetComponent<Rigidbody>().constraints = RigidbodyConstraints.None;
+        rbody.freezeRotation = true;
+        if (health <= 0)
+        {
+            curState = FSMState.Die;
+        }
+
+        float dist = Vector3.Distance(transform.position, playerTransform.position);
+
+        if (dist >= 6.0f)
+        {
+            curState = FSMState.Patrol;
+        }
+
+        else if (dist < 3.0f)
+        {
+            curState = FSMState.Attack;
+        }
+
+        transform.LookAt(target, Vector3.up);
+        transform.Translate(Vector3.forward * Time.deltaTime * speed);
+
+    }
+
+    private void UpdateAttackState()
+    {
+        if (health <= 0)
+        {
+            curState = FSMState.Die;
+        }
+
+        float dist = Vector3.Distance(transform.position, playerTransform.position);
+        //ControlSkeletonAnim.playerInRange = true;
+
+        if (dist > 5.0f)
+        {
+            curState = FSMState.Chase;
+        }
+
+        transform.LookAt(target, Vector3.up);
+        transform.GetComponent<Rigidbody>().constraints = RigidbodyConstraints.FreezeAll;
+        animator.Play("Attack");
+
+    }
+    private void UpdateDeathState()
+    {
+        health = 0;
+        healText.text = health.ToString();
+        healBar.fillAmount = health / maxHealth;
+        transform.GetComponent<Rigidbody>().constraints = RigidbodyConstraints.None;
+        rbody.freezeRotation = true;
+        if (Dead == false)
+        {
+            Dead = true;
+            animator.Play("Dead");
+            GameManager.inst.subtractElemental();
+            Destroy(thisObj, 1f);
+        }
+
+
+    }
+}
+
+
+
+
